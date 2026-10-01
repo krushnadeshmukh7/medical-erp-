@@ -1,0 +1,102 @@
+pipeline {
+
+    agent {
+        label 'worker'
+    }
+
+    tools {
+        terraform 'tf-install'
+    }
+
+    environment {
+        AWS_ACCESS = credentials('aws-access')
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git branch: 'dev',
+                    url: 'https://github.com/mayurpandit25/edublitz-b2b-medical-erp.git'
+            }
+        }
+
+        stage('Create IAM Policy') {
+            steps {
+                dir('terraform') {
+                    sh '''
+                        curl -L -o iam_policy.json \
+                        https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.8.2/docs/install/iam_policy.json
+
+                        echo "IAM policy downloaded successfully."
+
+                        echo "Checking required permissions:"
+                        grep -n "ec2:DescribeRouteTables" iam_policy.json || true
+                        grep -n "elasticloadbalancing:DescribeListenerAttributes" iam_policy.json || true
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                dir('terraform') {
+                    sh '''
+                        terraform init
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Format') {
+            steps {
+                dir('terraform') {
+                    sh '''
+                        terraform fmt -check -recursive
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Validate') {
+            steps {
+                dir('terraform') {
+                    sh '''
+                        terraform validate
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                dir('terraform') {
+                    sh '''
+                        terraform plan
+                    '''
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            steps {
+                dir('terraform') {
+                    sh '''
+                        terraform apply -auto-approve
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo 'EKS infrastructure created successfully.'
+        }
+
+        failure {
+            echo 'EKS infrastructure creation failed.'
+        }
+    }
+}

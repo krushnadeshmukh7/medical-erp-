@@ -1,0 +1,168 @@
+pipeline {
+    agent {
+        label 'worker'
+    }
+
+    tools {
+        maven 'maven'
+    }
+
+    environment {
+        my_aws_credential = credentials('aws-access')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'dev', url: 'https://github.com/mayurpandit25/edublitz-b2b-medical-erp.git'
+            }
+        }
+
+        stage('BUILD - USER-SERVICE') {
+            steps {
+                dir('user-service') {
+                    sh '''
+                    mvn clean package -DskipTests
+                    '''
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'user-service/target/*.jar', fingerprint: true
+                }
+            }
+        }
+
+        stage('SonarQube Analysis - USER-SERVICE') {
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    dir('user-service') {
+                        sh 'mvn sonar:sonar'
+                    }
+                }
+            }
+        }
+
+        stage('BUILD - ORDER-SERVICE') {
+            steps {
+                dir('order-service') {
+                    sh '''
+                    mvn clean package -DskipTests
+                    '''
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'order-service/target/*.jar', fingerprint: true
+                }
+            }
+        }
+
+        stage('SonarQube Analysis - ORDER-SERVICE') {
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    dir('order-service') {
+                        sh 'mvn sonar:sonar'
+                    }
+                }
+            }
+        }
+
+        stage('BUILD - PRODUCTS-SERVICE') {
+            steps {
+                dir('product-service') {
+                    sh '''
+                    mvn clean package -DskipTests
+                    '''
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'product-service/target/*.jar', fingerprint: true
+                }
+            }
+        }
+
+        stage('SonarQube Analysis - PRODUCTS-SERVICE') {
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    dir('product-service') {
+                        sh 'mvn sonar:sonar'
+                    }
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                sh '''
+                    docker build -t user-service:latest ./user-service
+                    docker build -t order-service:latest ./order-service
+                    docker build -t product-service:latest ./product-service
+                    docker images
+                '''
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                sh '''
+                    aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 942049393829.dkr.ecr.us-west-2.amazonaws.com
+
+                    #USER-SERVICE
+                    docker tag user-service:latest 942049393829.dkr.ecr.us-west-2.amazonaws.com/user-service:latest
+                    docker push 942049393829.dkr.ecr.us-west-2.amazonaws.com/user-service:latest
+
+                    #PRODUCT-SERVICE
+                    docker tag product-service:latest 942049393829.dkr.ecr.us-west-2.amazonaws.com/product-service:latest
+                    docker push 942049393829.dkr.ecr.us-west-2.amazonaws.com/product-service:latest
+
+                    #ORDER-SERVICE
+                    docker tag order-service:latest 942049393829.dkr.ecr.us-west-2.amazonaws.com/order-service:latest
+                    docker push 942049393829.dkr.ecr.us-west-2.amazonaws.com/order-service:latest
+
+                '''
+            }
+        }
+
+        stage('Deployment On EKS') {
+            steps {
+                sh '''
+                aws eks update-kubeconfig --region us-west-2 --name my-eks-cluster1
+
+                kubectl apply -f k8s/namespace/
+                kubectl apply -f k8s/deployments/
+                kubectl apply -f k8s/configmaps/
+                kubectl apply -f k8s/services/
+                kubectl apply -f k8s/ingress/ingressclass.yaml
+                kubectl apply -f k8s/ingress/ingress.yaml
+                kubectl apply -f k8s/hpa/
+
+                kubectl get pods -n med-erp
+                kubectl get svc -n med-erp
+                sleep 30
+                kubectl get all -n med-erp
+                kubectl get ingress -n med-erp
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Backend Pipeline is Successfull.'
+        }
+
+        failure {
+            echo 'Backend pipeline is failed'
+        }
+    }
+}
+
+
+
+
+
+
+
+
